@@ -22,23 +22,34 @@ class Window(QMainWindow):
         # making image color to white
         self.image.fill(Qt.white)
 
+        # enable mouse tracking so we always know cursor position
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
         # variables
         # drawing flag
         self.drawing = False
         # default brush size
-        self.brushSize = 2
+        self.brushSize = 20
         # default color
         self.brushColor = Qt.black
+        # angle (in degrees) for the brush line; 90 = vertical
+        self.brushAngle = 90.0
+        # key state for smooth simultaneous rotation and size changes
+        self._keyLeft = False
+        self._keyRight = False
+        self._keyUp = False
+        self._keyDown = False
+
+        # timer to continuously apply key-based changes
+        self._keyTimer = QTimer(self)
+        self._keyTimer.timeout.connect(self._applyKeyChanges)
+        self._keyTimer.start(16)
 
         # QPoint object to tract the point
         self.lastPoint = QPoint()
-
-        # store the last drawn path as a list of points
-        self.lastPathPoints = []
-
-        # rotation range for projected line (degrees)
-        self.rectStartAngle = 0.0
-        self.rectEndAngle = 360.0
+        # current cursor position for drawing guide line
+        self.cursorPos = None
 
         # creating menu bar
         mainMenu = self.menuBar()
@@ -51,9 +62,6 @@ class Window(QMainWindow):
 
         # adding brush color to ain menu
         b_color = mainMenu.addMenu("Brush Color")
-
-        # menu for path-related actions
-        path_menu = mainMenu.addMenu("Path")
 
         # creating save action
         saveAction = QAction("Save", self)
@@ -72,23 +80,6 @@ class Window(QMainWindow):
         fileMenu.addAction(clearAction)
         # adding action to the clear
         clearAction.triggered.connect(self.clear)
-
-        # action to apply a stroke to the last drawn path
-        strokePathAction = QAction("Apply Stroke to Last Path", self)
-        strokePathAction.setShortcut("Ctrl + P")
-        path_menu.addAction(strokePathAction)
-        strokePathAction.triggered.connect(self.applyStrokeToLastPath)
-
-        # action to project a rotating line onto the last path
-        rectPathAction = QAction("Project Rotating Line on Last Path", self)
-        rectPathAction.setShortcut("Ctrl + R")
-        path_menu.addAction(rectPathAction)
-        rectPathAction.triggered.connect(self.projectRotatingRectangleOnLastPath)
-
-        # action to set rotation range for the projected line
-        setRangeAction = QAction("Set Line Rotation Range...", self)
-        path_menu.addAction(setRangeAction)
-        setRangeAction.triggered.connect(self.setRectangleRotationRange)
 
         # creating options for brush sizes
         # creating action for selecting pixel of 4px
@@ -146,32 +137,39 @@ class Window(QMainWindow):
             self.drawing = True
             # make last point to the point of cursor
             self.lastPoint = event.pos()
-            # start a new path
-            self.lastPathPoints = [self.lastPoint]
+        # update current cursor position
+        self.cursorPos = event.pos()
+        self.update()
 
     # method for tracking mouse activity
     def mouseMoveEvent(self, event):
-        
+        # always track cursor position
+        self.cursorPos = event.pos()
+
         # checking if left button is pressed and drawing flag is true
-        if (event.buttons() & Qt.LeftButton) & self.drawing:
-            
+        if (event.buttons() & Qt.LeftButton) and self.drawing:
+
             # creating painter object
             painter = QPainter(self.image)
-            
-            # set the pen of the painter
-            painter.setPen(QPen(self.brushColor, self.brushSize, 
-                            Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            
-            # draw line from the last point of cursor to the current point
-            # this will draw only one step
-            painter.drawLine(self.lastPoint, event.pos())
-            
-            # change the last point
-            self.lastPoint = event.pos()
-            # record the point in the current path
-            self.lastPathPoints.append(self.lastPoint)
-            # update
-            self.update()
+
+            # set the pen of the painter (square line caps)
+            painter.setPen(QPen(self.brushColor, 1,
+                            Qt.SolidLine, Qt.SquareCap, Qt.RoundJoin))
+
+            # draw a rotated line centered at the cursor position,
+            # with total length equal to the brush size
+            half_len = self.brushSize / 2.0
+            angle_rad = math.radians(self.brushAngle)
+            dx = half_len * math.cos(angle_rad)
+            dy = half_len * math.sin(angle_rad)
+            x = event.pos().x()
+            y = event.pos().y()
+            p1 = QPointF(x - dx, y - dy)
+            p2 = QPointF(x + dx, y + dy)
+            painter.drawLine(p1, p2)
+
+        # update to repaint cursor guide line
+        self.update()
 
     # method for mouse left button release
     def mouseReleaseEvent(self, event):
@@ -180,13 +178,87 @@ class Window(QMainWindow):
             # make drawing flag false
             self.drawing = False
 
+    # clear cursor position when leaving the window
+    def leaveEvent(self, event):
+        self.cursorPos = None
+        self.update()
+        super().leaveEvent(event)
+
+    # handle key presses to control rotation and brush size
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key == Qt.Key_Left:
+            self._keyLeft = True
+        elif key == Qt.Key_Right:
+            self._keyRight = True
+        elif key == Qt.Key_Up:
+            self._keyUp = True
+        elif key == Qt.Key_Down:
+            self._keyDown = True
+        else:
+            super().keyPressEvent(event)
+
+    # handle key release to stop continuous changes
+    def keyReleaseEvent(self, event):
+        key = event.key()
+        if key == Qt.Key_Left:
+            self._keyLeft = False
+        elif key == Qt.Key_Right:
+            self._keyRight = False
+        elif key == Qt.Key_Up:
+            self._keyUp = False
+        elif key == Qt.Key_Down:
+            self._keyDown = False
+        else:
+            super().keyReleaseEvent(event)
+
+    # continuously apply key-based angle and size changes
+    def _applyKeyChanges(self):
+        changed = False
+
+        if self._keyLeft:
+            self.brushAngle = (self.brushAngle - 2.0) % 360.0
+            changed = True
+
+        if self._keyRight:
+            self.brushAngle = (self.brushAngle + 2.0) % 360.0
+            changed = True
+
+        if self._keyUp:
+            # increase brush size
+            self.brushSize = min(self.brushSize + 1, 150)
+            changed = True
+
+        if self._keyDown:
+            # decrease brush size
+            self.brushSize = max(self.brushSize - 1, 20)
+            changed = True
+
+        if changed:
+            self.update()
+
     # paint event
     def paintEvent(self, event):
         # create a canvas
         canvasPainter = QPainter(self)
-        
+
         # draw rectangle  on the canvas
         canvasPainter.drawImage(self.rect(), self.image, self.image.rect())
+
+        # draw a vertical guide line at the cursor, with length equal to brush size
+        if self.cursorPos is not None:
+            canvasPainter.setRenderHint(QPainter.Antialiasing, True)
+            canvasPainter.setPen(QPen(self.brushColor, 1,
+                                  Qt.SolidLine, Qt.SquareCap, Qt.RoundJoin))
+            half_len = self.brushSize / 2.0
+            angle_rad = math.radians(self.brushAngle)
+            dx = half_len * math.cos(angle_rad)
+            dy = half_len * math.sin(angle_rad)
+            x = self.cursorPos.x()
+            y = self.cursorPos.y()
+            p1 = QPointF(x - dx, y - dy)
+            p2 = QPointF(x + dx, y + dy)
+            canvasPainter.drawLine(p1, p2)
 
     # method for saving canvas
     def save(self):
@@ -203,93 +275,6 @@ class Window(QMainWindow):
         self.image.fill(Qt.white)
         # update
         self.update()
-
-        # also clear stored path information
-        self.lastPathPoints = []
-
-    def applyStrokeToLastPath(self):
-        # apply a stroke along the last drawn path using the current brush
-        if len(self.lastPathPoints) < 2:
-            return
-
-        painter = QPainter(self.image)
-        painter.setPen(QPen(self.brushColor, self.brushSize,
-                            Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-
-        prev_point = self.lastPathPoints[0]
-        for point in self.lastPathPoints[1:]:
-            painter.drawLine(prev_point, point)
-            prev_point = point
-
-        self.update()
-
-    def projectRotatingRectangleOnLastPath(self):
-        # project a rotating line along the last drawn path
-        if len(self.lastPathPoints) < 2:
-            return
-
-        painter = QPainter(self.image)
-        painter.setPen(QPen(self.brushColor, 1,
-                            Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin))
-
-        segment_count = len(self.lastPathPoints) - 1
-
-        for i in range(1, len(self.lastPathPoints)):
-            p1 = self.lastPathPoints[i - 1]
-            p2 = self.lastPathPoints[i]
-
-            dx = p2.x() - p1.x()
-            dy = p2.y() - p1.y()
-
-            if dx == 0 and dy == 0:
-                continue
-
-            angle_deg = math.degrees(math.atan2(dy, dx))
-
-            # fraction of the way along the path for this segment
-            if segment_count > 1:
-                t = (i - 1) / (segment_count - 1)
-            else:
-                t = 0.0
-
-            # interpolate additional rotation between start and end angles
-            extra_angle = self.rectStartAngle + t * (self.rectEndAngle - self.rectStartAngle)
-            total_angle = angle_deg + extra_angle
-
-            cx = (p1.x() + p2.x()) / 2.0
-            cy = (p1.y() + p2.y()) / 2.0
-
-            painter.save()
-            painter.translate(cx, cy)
-            painter.rotate(total_angle)
-
-            line_length = self.brushSize * 6
-            line = QLineF(-line_length / 2.0, 0.0,
-                          line_length / 2.0, 0.0)
-            painter.drawLine(line)
-
-            painter.restore()
-
-        self.update()
-
-    def setRectangleRotationRange(self):
-        # allow the user to set start and end rotation angles in degrees
-        start_angle, ok1 = QInputDialog.getDouble(
-            self, "Start Angle", "Start angle (degrees):",
-            self.rectStartAngle, -3600.0, 3600.0, 1
-        )
-        if not ok1:
-            return
-
-        end_angle, ok2 = QInputDialog.getDouble(
-            self, "End Angle", "End angle (degrees):",
-            self.rectEndAngle, -3600.0, 3600.0, 1
-        )
-        if not ok2:
-            return
-
-        self.rectStartAngle = start_angle
-        self.rectEndAngle = end_angle
 
     # methods for changing pixel sizes
     def Pixel_4(self):
