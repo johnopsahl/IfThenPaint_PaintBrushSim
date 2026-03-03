@@ -2,6 +2,12 @@
 
 IfThenPaint Brush Simulator is a small PyQt5 desktop app that lets you experiment with a “brush” made from thin line stamps. You can rotate, resize, and change the thickness of the stamped line, switch between flat and round brush behaviors, and export the exact geometry of each stroke to JSON.
 
+### Flat Brush Example
+![Reference Image](images/flat_brush.png)
+
+### Round Brush Example
+![Reference Image](images/round_brush.png)
+
 ### Features
 
 - **Interactive brush preview**
@@ -66,25 +72,3 @@ Run the app:
 ```bash
 python main.py
 ```
-
-### Building a Windows executable (PyInstaller)
-
-1. Install PyInstaller (in the environment where `PyQt5` is installed):
-
-   ```bash
-   pip install pyinstaller
-   ```
-
-2. From the project root, build the executable:
-
-   ```bash
-   pyinstaller --noconsole --onefile --name IfThenPaint_PaintBrushSim main.py
-   ```
-
-3. The built app will be located at:
-
-```text
-dist/IfThenPaint_PaintBrushSim.exe
-```
-
-You can copy this `.exe` to other Windows machines (they do not need Python installed, but may need compatible VC++ runtimes).
