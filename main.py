@@ -5,6 +5,7 @@ from PyQt5.QtCore import *
 import sys
 import math
 import time
+import json
 
 # window class
 class Window(QMainWindow):
@@ -12,7 +13,7 @@ class Window(QMainWindow):
         super().__init__()
 
         # setting title
-        self.setWindowTitle("IfThenPaint Brush Simulator")
+        self.setWindowTitle("IfThenPaint Paint Brush Sim")
 
         # setting geometry to main window
         self.setGeometry(100, 100, 800, 600)
@@ -62,11 +63,15 @@ class Window(QMainWindow):
         # lists of top and bottom points for each stamp in the current stroke
         self.topPoints = []
         self.bottomPoints = []
+        # list of center points for each stamp in the current stroke
+        self.centerPoints = []
+        # list of all completed paths (strokes)
+        self.paths = []
 
         # creating menu bar
         mainMenu = self.menuBar()
 
-        # creating file menu for save and clear action
+        # creating file menu for save, export and clear action
         fileMenu = mainMenu.addMenu("File")
 
         # creating brush type menu
@@ -79,21 +84,21 @@ class Window(QMainWindow):
         b_color = mainMenu.addMenu("Brush Color")
 
         # creating save action
-        saveAction = QAction("Save", self)
-        # adding short cut for save action
-        saveAction.setShortcut("Ctrl + S")
-        # adding save to the file menu
+        saveAction = QAction("Save Image", self)
+        saveAction.setShortcut("Ctrl+S")
         fileMenu.addAction(saveAction)
-        # adding action to the save
         saveAction.triggered.connect(self.save)
+
+        # creating export paths action
+        exportAction = QAction("Export Paths", self)
+        exportAction.setShortcut("Ctrl+E")
+        fileMenu.addAction(exportAction)
+        exportAction.triggered.connect(self.export_paths)
 
         # creating clear action
         clearAction = QAction("Clear", self)
-        # adding short cut to the clear action
-        clearAction.setShortcut("Ctrl + C")
-        # adding clear to the file menu
+        clearAction.setShortcut("Ctrl+C")
         fileMenu.addAction(clearAction)
-        # adding action to the clear
         clearAction.triggered.connect(self.clear)
 
         # creating brush type actions with check indicators
@@ -178,6 +183,8 @@ class Window(QMainWindow):
             # start new top/bottom paths for this stroke
             self.topPoints = []
             self.bottomPoints = []
+            # start new center path for this stroke (include starting point)
+            self.centerPoints = [QPointF(event.pos())]
         # update current cursor position
         self.cursorPos = event.pos()
         self.update()
@@ -243,6 +250,8 @@ class Window(QMainWindow):
             # append current top and bottom points to their paths
             self.topPoints.append(top_point)
             self.bottomPoints.append(bottom_point)
+            # append current center point to its path
+            self.centerPoints.append(QPointF(x, y))
 
             # now draw a 1-pixel-wide line along the center of the drawn path
             painter.setPen(QPen(self.brushColor, 1,
@@ -271,6 +280,26 @@ class Window(QMainWindow):
         if event.button() == Qt.LeftButton:
             # make drawing flag false
             self.drawing = False
+
+            # when a stroke finishes, save its path data
+            if self.centerPoints or self.topPoints or self.bottomPoints:
+                color_hex = QColor(self.brushColor).name()
+                path_data = {
+                    "brush_type": self.brushType,
+                    "brush_size": self.brushSize,
+                    "stamp_thickness": self.stampThickness,
+                    "color": color_hex,
+                    "center_points": [
+                        [p.x(), p.y()] for p in self.centerPoints
+                    ],
+                    "top_points": [
+                        [p.x(), p.y()] for p in self.topPoints
+                    ],
+                    "bottom_points": [
+                        [p.x(), p.y()] for p in self.bottomPoints
+                    ],
+                }
+                self.paths.append(path_data)
 
     # clear cursor position when leaving the window
     def leaveEvent(self, event):
@@ -399,8 +428,38 @@ class Window(QMainWindow):
     def clear(self):
         # make the whole canvas white
         self.image.fill(Qt.white)
+        # reset stored paths and stroke data
+        self.paths = []
+        self.topPoints = []
+        self.bottomPoints = []
+        self.centerPoints = []
+        self.lastNormal = None
         # update
         self.update()
+
+    # method for exporting all paths as JSON
+    def export_paths(self):
+        if not self.paths:
+            QFileDialog.information(self, "Export Paths", "There are no paths to export.")
+            return
+
+        filePath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Paths",
+            "",
+            "JSON Files (*.json);;All Files (*.*)",
+        )
+
+        if not filePath:
+            return
+
+        data = {"paths": self.paths}
+
+        try:
+            with open(filePath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export paths:\n{e}")
 
     # methods for changing brush type
     def setBrushFlat(self):
