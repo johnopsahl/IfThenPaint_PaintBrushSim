@@ -4,6 +4,7 @@ from PyQt5.QtGui import *
 from PyQt5.QtCore import * 
 import sys
 import math
+import time
 
 # window class
 class Window(QMainWindow):
@@ -35,6 +36,8 @@ class Window(QMainWindow):
         self.brushColor = Qt.black
         # angle (in degrees) for the brush line; 90 = vertical
         self.brushAngle = 90.0
+        # last time a stamp was drawn (for fixed stamp frequency)
+        self.lastStampTime = 0.0
         # key state for smooth simultaneous rotation and size changes
         self._keyLeft = False
         self._keyRight = False
@@ -50,6 +53,9 @@ class Window(QMainWindow):
         self.lastPoint = QPoint()
         # current cursor position for drawing guide line
         self.cursorPos = None
+        # lists of top and bottom points for each stamp in the current stroke
+        self.topPoints = []
+        self.bottomPoints = []
 
         # creating menu bar
         mainMenu = self.menuBar()
@@ -137,6 +143,11 @@ class Window(QMainWindow):
             self.drawing = True
             # make last point to the point of cursor
             self.lastPoint = event.pos()
+            # allow an immediate stamp on first movement (50 Hz => 0.02 s)
+            self.lastStampTime = time.time() - 0.02
+            # start new top/bottom paths for this stroke
+            self.topPoints = []
+            self.bottomPoints = []
         # update current cursor position
         self.cursorPos = event.pos()
         self.update()
@@ -149,10 +160,17 @@ class Window(QMainWindow):
         # checking if left button is pressed and drawing flag is true
         if (event.buttons() & Qt.LeftButton) and self.drawing:
 
+            # enforce a fixed stamp frequency of 50 Hz (every 0.02 seconds)
+            now = time.time()
+            if now - self.lastStampTime < 0.02:
+                # still update preview line, but skip stamping
+                self.update()
+                return
+
             # creating painter object
             painter = QPainter(self.image)
 
-            # set the pen of the painter (square line caps)
+            # set the pen of the painter for the main stamped line (square line caps, 1px thick)
             painter.setPen(QPen(self.brushColor, 1,
                             Qt.SolidLine, Qt.SquareCap, Qt.RoundJoin))
 
@@ -164,9 +182,31 @@ class Window(QMainWindow):
             dy = half_len * math.sin(angle_rad)
             x = event.pos().x()
             y = event.pos().y()
-            p1 = QPointF(x - dx, y - dy)
-            p2 = QPointF(x + dx, y + dy)
-            painter.drawLine(p1, p2)
+            top_point = QPointF(x - dx, y - dy)
+            bottom_point = QPointF(x + dx, y + dy)
+            painter.drawLine(top_point, bottom_point)
+
+            # append current top and bottom points to their paths
+            self.topPoints.append(top_point)
+            self.bottomPoints.append(bottom_point)
+
+            # now draw a 1-pixel-wide line along the center of the drawn path
+            painter.setPen(QPen(self.brushColor, 1,
+                            Qt.SolidLine, Qt.SquareCap, Qt.RoundJoin))
+            painter.drawLine(self.lastPoint, event.pos())
+
+            # draw lines connecting all top points along the drawn path
+            if len(self.topPoints) > 1:
+                painter.drawLine(self.topPoints[-2], self.topPoints[-1])
+
+            # draw lines connecting all bottom points along the drawn path
+            if len(self.bottomPoints) > 1:
+                painter.drawLine(self.bottomPoints[-2], self.bottomPoints[-1])
+
+            # update lastPoint so the path line follows the stroke
+            self.lastPoint = event.pos()
+            # record stamp time
+            self.lastStampTime = now
 
         # update to repaint cursor guide line
         self.update()
