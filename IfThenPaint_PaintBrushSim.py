@@ -12,7 +12,7 @@ class Window(QMainWindow):
         super().__init__()
 
         # setting title
-        self.setWindowTitle("Paint with PyQt5")
+        self.setWindowTitle("IfThenPaint Brush Simulator")
 
         # setting geometry to main window
         self.setGeometry(100, 100, 800, 600)
@@ -34,10 +34,16 @@ class Window(QMainWindow):
         self.brushSize = 20
         # default color
         self.brushColor = Qt.black
+        # brush type: "Flat" or "Round"
+        self.brushType = "Flat"
+        # stamped line thickness (in pixels)
+        self.stampThickness = 1
         # angle (in degrees) for the brush line; 90 = vertical
         self.brushAngle = 90.0
         # last time a stamp was drawn (for fixed stamp frequency)
         self.lastStampTime = 0.0
+        # last normal (perpendicular) direction used for Round brush cursor/stamp
+        self.lastNormal = None
         # key state for smooth simultaneous rotation and size changes
         self._keyLeft = False
         self._keyRight = False
@@ -63,10 +69,13 @@ class Window(QMainWindow):
         # creating file menu for save and clear action
         fileMenu = mainMenu.addMenu("File")
 
-        # adding brush size to main menu
-        b_size = mainMenu.addMenu("Brush Size")
+        # creating brush type menu
+        brushTypeMenu = mainMenu.addMenu("Brush Type")
 
-        # adding brush color to ain menu
+        # creating stamp thickness menu
+        thicknessMenu = mainMenu.addMenu("Stamp Thickness")
+
+        # adding brush color to main menu
         b_color = mainMenu.addMenu("Brush Color")
 
         # creating save action
@@ -87,51 +96,72 @@ class Window(QMainWindow):
         # adding action to the clear
         clearAction.triggered.connect(self.clear)
 
-        # creating options for brush sizes
-        # creating action for selecting pixel of 4px
-        pix_4 = QAction("4px", self)
-        # adding this action to the brush size
-        b_size.addAction(pix_4)
-        # adding method to this
-        pix_4.triggered.connect(self.Pixel_4)
+        # creating brush type actions with check indicators
+        brushTypeGroup = QActionGroup(self)
+        brushTypeGroup.setExclusive(True)
+        flatAction = QAction("Flat", self, checkable=True)
+        roundAction = QAction("Round", self, checkable=True)
+        brushTypeGroup.addAction(flatAction)
+        brushTypeGroup.addAction(roundAction)
+        brushTypeMenu.addAction(flatAction)
+        brushTypeMenu.addAction(roundAction)
+        flatAction.triggered.connect(self.setBrushFlat)
+        roundAction.triggered.connect(self.setBrushRound)
+        # default brush type is Flat
+        flatAction.setChecked(True)
 
-        # similarly repeating above steps for different sizes
-        pix_7 = QAction("7px", self)
-        b_size.addAction(pix_7)
-        pix_7.triggered.connect(self.Pixel_7)
+        # creating stamp thickness actions with check indicators
+        thicknessGroup = QActionGroup(self)
+        thicknessGroup.setExclusive(True)
 
-        pix_9 = QAction("9px", self)
-        b_size.addAction(pix_9)
-        pix_9.triggered.connect(self.Pixel_9)
+        thickness1 = QAction("1 px", self, checkable=True)
+        thickness10 = QAction("10 px", self, checkable=True)
 
-        pix_12 = QAction("12px", self)
-        b_size.addAction(pix_12)
-        pix_12.triggered.connect(self.Pixel_12)
+        thicknessMenu.addAction(thickness1)
+        thicknessMenu.addAction(thickness10)
 
-        # creating options for brush color
+        thicknessGroup.addAction(thickness1)
+        thicknessGroup.addAction(thickness10)
+
+        thickness1.triggered.connect(lambda: self.setStampThickness(1))
+        thickness10.triggered.connect(lambda: self.setStampThickness(10))
+
+        # default stamp thickness is 1 px
+        thickness1.setChecked(True)
+
+        # creating options for brush color with check indicators
+        colorGroup = QActionGroup(self)
+        colorGroup.setExclusive(True)
+
         # creating action for black color
-        black = QAction("Black", self)
-        # adding this action to the brush colors
+        black = QAction("Black", self, checkable=True)
         b_color.addAction(black)
-        # adding methods to the black
+        colorGroup.addAction(black)
         black.triggered.connect(self.blackColor)
 
         # similarly repeating above steps for different color
-        white = QAction("White", self)
-        b_color.addAction(white)
-        white.triggered.connect(self.whiteColor)
-
-        green = QAction("Green", self)
+        green = QAction("Green", self, checkable=True)
         b_color.addAction(green)
+        colorGroup.addAction(green)
         green.triggered.connect(self.greenColor)
 
-        yellow = QAction("Yellow", self)
+        yellow = QAction("Yellow", self, checkable=True)
         b_color.addAction(yellow)
+        colorGroup.addAction(yellow)
         yellow.triggered.connect(self.yellowColor)
 
-        red = QAction("Red", self)
+        blue = QAction("Blue", self, checkable=True)
+        b_color.addAction(blue)
+        colorGroup.addAction(blue)
+        blue.triggered.connect(self.blueColor)
+
+        red = QAction("Red", self, checkable=True)
         b_color.addAction(red)
+        colorGroup.addAction(red)
         red.triggered.connect(self.redColor)
+
+        # default brush color is black
+        black.setChecked(True)
 
 
     # method for checking mouse cicks
@@ -171,17 +201,41 @@ class Window(QMainWindow):
             painter = QPainter(self.image)
 
             # set the pen of the painter for the main stamped line (square line caps, 1px thick)
-            painter.setPen(QPen(self.brushColor, 1,
+            painter.setPen(QPen(self.brushColor, self.stampThickness,
                             Qt.SolidLine, Qt.SquareCap, Qt.RoundJoin))
 
-            # draw a rotated line centered at the cursor position,
+            # draw a line centered at the cursor position,
             # with total length equal to the brush size
             half_len = self.brushSize / 2.0
-            angle_rad = math.radians(self.brushAngle)
-            dx = half_len * math.cos(angle_rad)
-            dy = half_len * math.sin(angle_rad)
             x = event.pos().x()
             y = event.pos().y()
+
+            if self.brushType == "Round" and (event.pos() != self.lastPoint):
+                # for Round brush, stamp is always perpendicular to the path direction
+                vx = x - self.lastPoint.x()
+                vy = y - self.lastPoint.y()
+                length = math.hypot(vx, vy)
+                if length == 0:
+                    angle_rad = math.radians(self.brushAngle)
+                    nx = math.cos(angle_rad)
+                    ny = math.sin(angle_rad)
+                else:
+                    # normalized direction vector
+                    vx /= length
+                    vy /= length
+                    # perpendicular normal vector
+                    nx = -vy
+                    ny = vx
+                # remember last perpendicular direction for Round brush
+                self.lastNormal = (nx, ny)
+                dx = half_len * nx
+                dy = half_len * ny
+            else:
+                # for Flat brush (or degenerate case), use the current brush angle
+                angle_rad = math.radians(self.brushAngle)
+                dx = half_len * math.cos(angle_rad)
+                dy = half_len * math.sin(angle_rad)
+
             top_point = QPointF(x - dx, y - dy)
             bottom_point = QPointF(x + dx, y + dy)
             painter.drawLine(top_point, bottom_point)
@@ -285,17 +339,49 @@ class Window(QMainWindow):
         # draw rectangle  on the canvas
         canvasPainter.drawImage(self.rect(), self.image, self.image.rect())
 
-        # draw a vertical guide line at the cursor, with length equal to brush size
+        # draw a guide line at the cursor, with length equal to brush size
         if self.cursorPos is not None:
             canvasPainter.setRenderHint(QPainter.Antialiasing, True)
-            canvasPainter.setPen(QPen(self.brushColor, 1,
+            canvasPainter.setPen(QPen(self.brushColor, self.stampThickness,
                                   Qt.SolidLine, Qt.SquareCap, Qt.RoundJoin))
             half_len = self.brushSize / 2.0
-            angle_rad = math.radians(self.brushAngle)
-            dx = half_len * math.cos(angle_rad)
-            dy = half_len * math.sin(angle_rad)
             x = self.cursorPos.x()
             y = self.cursorPos.y()
+
+            if self.brushType == "Round" and self.drawing and (self.cursorPos != self.lastPoint):
+                # for Round brush while drawing, cursor line is perpendicular to path
+                vx = x - self.lastPoint.x()
+                vy = y - self.lastPoint.y()
+                length = math.hypot(vx, vy)
+                if length == 0:
+                    # fallback to vertical if movement is too small
+                    dx = 0
+                    dy = half_len
+                else:
+                    vx /= length
+                    vy /= length
+                    nx = -vy
+                    ny = vx
+                    dx = half_len * nx
+                    dy = half_len * ny
+                # remember last perpendicular direction while drawing
+                self.lastNormal = (nx, ny)
+            elif self.brushType == "Round":
+                # Round brush but no path being drawn:
+                # keep cursor line perpendicular to the last drawn path if available,
+                # otherwise snap to vertical
+                if self.lastNormal is not None:
+                    nx, ny = self.lastNormal
+                    dx = half_len * nx
+                    dy = half_len * ny
+                else:
+                    dx = 0
+                    dy = half_len
+            else:
+                # Flat brush uses the current brush angle
+                angle_rad = math.radians(self.brushAngle)
+                dx = half_len * math.cos(angle_rad)
+                dy = half_len * math.sin(angle_rad)
             p1 = QPointF(x - dx, y - dy)
             p2 = QPointF(x + dx, y + dy)
             canvasPainter.drawLine(p1, p2)
@@ -316,28 +402,26 @@ class Window(QMainWindow):
         # update
         self.update()
 
-    # methods for changing pixel sizes
-    def Pixel_4(self):
-        self.brushSize = 4
+    # methods for changing brush type
+    def setBrushFlat(self):
+        self.brushType = "Flat"
 
-    def Pixel_7(self):
-        self.brushSize = 7
+    def setBrushRound(self):
+        self.brushType = "Round"
 
-    def Pixel_9(self):
-        self.brushSize = 9
-
-    def Pixel_12(self):
-        self.brushSize = 12
+    # method for changing stamp thickness
+    def setStampThickness(self, thickness):
+        self.stampThickness = thickness
 
     # methods for changing brush color
     def blackColor(self):
         self.brushColor = Qt.black
 
-    def whiteColor(self):
-        self.brushColor = Qt.white
-
     def greenColor(self):
         self.brushColor = Qt.green
+
+    def blueColor(self):
+        self.brushColor = Qt.blue
 
     def yellowColor(self):
         self.brushColor = Qt.yellow
